@@ -1,4 +1,5 @@
 Movie Recommender System
+
 A personalized movie recommendation engine built from scratch in R, using User-to-User Collaborative Filtering on a real survey dataset of 16 critics and 6 movies.
 This project was completed in two phases — first implementing a non-personalized Global Baseline Estimate, then building a fully personalized collaborative filtering system and evaluating whether personalization actually improved accuracy.
 What It Does
