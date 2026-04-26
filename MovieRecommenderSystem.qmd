@@ -1,0 +1,300 @@
+---
+title: "Personalized Movie Recommender System"
+subtitle: "User-to-User Collaborative Filtering"
+author: "Mark Hamer"
+date: "2026-04-24"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    theme: cosmo
+    code-fold: false
+    number-sections: true
+---
+
+# Introduction
+
+In the previous assignment, I used a **Global Baseline Estimate (GBE)** to predict movie ratings. The GBE is non-personalized, it uses the overall mean, a user bias, and a movie bias to make predictions, but it does not consider which specific users share similar taste. 
+
+In this project, I build a **personalized recommender system** using **User-to-User Collaborative Filtering**. This algorithm identifies users who rate movies similarly to a target user (also known as neighbors), and uses their ratings to predict what the target user would rate an unseen movie.
+
+**What the recommender outputs:**
+
+- Predicted ratings for every unrated user movie pair
+- A top-N ranked recommendation list per user
+- RMSE evaluation via leave-one-out cross-validation, compared against the GBE baseline
+
+# Step 1 — Load and Prepare the Data
+
+```{r}
+library(readxl)
+
+ratings_data <- read_excel("MovieRatings.xlsx", sheet = "MovieRatings")
+
+critic_names <- ratings_data$Critic
+
+ratings_matrix <- as.matrix(ratings_data[, -1])
+rownames(ratings_matrix) <- critic_names
+
+ratings_matrix[ratings_matrix == "?"] <- NA
+ratings_matrix <- apply(ratings_matrix, 2, as.numeric)
+rownames(ratings_matrix) <- critic_names
+
+overall_mean <- mean(ratings_matrix, na.rm = TRUE)
+
+user_avg <- rowMeans(ratings_matrix, na.rm = TRUE)
+user_bias <- user_avg - overall_mean
+
+movie_avg <- colMeans(ratings_matrix, na.rm = TRUE)
+movie_bias <- movie_avg - overall_mean
+
+cat("Ratings Matrix:\n\n")
+print(ratings_matrix)
+
+cat("\nOverall mean:", round(overall_mean, 2), "\n")
+```
+
+# Step 2 — Center the Ratings
+
+```{r}
+centered_matrix <- ratings_matrix - user_avg
+
+cat("Centered Ratings Matrix:\n\n")
+print(round(centered_matrix, 2))
+```
+
+# Step 3 — Compute User Similarity
+
+```{r}
+n_users <- nrow(ratings_matrix)
+
+sim_matrix <- matrix(NA, nrow = n_users, ncol = n_users)
+rownames(sim_matrix) <- critic_names
+colnames(sim_matrix) <- critic_names
+
+for (i in 1:n_users) {
+  for (j in 1:n_users) {
+    if (i == j) {
+      sim_matrix[i, j] <- 1  
+      next
+    }
+    
+    both_rated <- !is.na(centered_matrix[i, ]) & !is.na(centered_matrix[j, ])
+    n_common <- sum(both_rated)
+    
+    if (n_common < 2) {
+      sim_matrix[i, j] <- NA
+      next
+    }
+    
+    u_ratings <- centered_matrix[i, both_rated]
+    v_ratings <- centered_matrix[j, both_rated]
+    
+    numerator <- sum(u_ratings * v_ratings)
+    denominator <- sqrt(sum(u_ratings^2)) * sqrt(sum(v_ratings^2))
+    
+    if (denominator == 0) {
+      sim_matrix[i, j] <- 0
+    } else {
+      sim_matrix[i, j] <- numerator / denominator
+    }
+  }
+}
+
+cat("User Similarity Matrix (Pearson Correlation):\n\n")
+print(round(sim_matrix, 2))
+```
+
+# Step 4 — Generate Predictions
+
+```{r}
+predict_cf <- function(user, movie, k = 5) {
+  
+  if (!is.na(ratings_matrix[user, movie])) {
+    return(ratings_matrix[user, movie])
+  }
+  
+  sims <- sim_matrix[user, ]
+  
+  candidates <- which(!is.na(ratings_matrix[, movie]) & 
+                       !is.na(sims) & 
+                       sims > 0 & 
+                       names(sims) != user)
+  
+  if (length(candidates) == 0) {
+    prediction <- overall_mean + user_bias[user] + movie_bias[movie]
+    return(prediction)
+  }
+  
+  candidates <- candidates[order(sims[candidates], decreasing = TRUE)]
+  if (length(candidates) > k) {
+    candidates <- candidates[1:k]
+  }
+  neighbor_sims <- sims[candidates]
+  neighbor_centered <- centered_matrix[candidates, movie]
+
+  prediction <- user_avg[user] + 
+    sum(neighbor_sims * neighbor_centered) / sum(abs(neighbor_sims))
+  
+  return(prediction)
+}
+
+prediction_matrix <- ratings_matrix
+
+for (i in 1:nrow(ratings_matrix)) {
+  for (j in 1:ncol(ratings_matrix)) {
+    if (is.na(ratings_matrix[i, j])) {
+      prediction_matrix[i, j] <- predict_cf(rownames(ratings_matrix)[i],
+                                             colnames(ratings_matrix)[j])
+    }
+  }
+}
+
+cat("Predicted Ratings for All Missing Values:\n")
+cat("(Original ratings kept as-is, predictions fill the gaps)\n\n")
+print(round(prediction_matrix, 2))
+```
+
+# Step 5 — Top-N Recommendations Per User
+
+```{r}
+cat("Top Movie Recommendations Per User:\n")
+cat("(Only showing movies the user has NOT rated, ranked by predicted rating)\n\n")
+
+for (i in 1:nrow(ratings_matrix)) {
+  user <- rownames(ratings_matrix)[i]
+  
+  unrated <- which(is.na(ratings_matrix[i, ]))
+  
+  if (length(unrated) == 0) {
+    cat(user, ": Rated all movies — no recommendations needed\n\n")
+    next
+  }
+  
+preds <- setNames(prediction_matrix[i, unrated], colnames(ratings_matrix)[unrated])
+  preds_sorted <- sort(preds, decreasing = TRUE)
+  
+  cat(user, ":\n")
+  for (j in 1:length(preds_sorted)) {
+    cat("  ", j, ". ", names(preds_sorted)[j], 
+        " (predicted: ", round(preds_sorted[j], 2), ")\n", sep = "")
+  }
+  cat("\n")
+}
+```
+
+# Step 6 — Evaluate with Leave-One-Out Cross-Validation
+
+```{r}
+cf_errors <- c()
+gbe_errors <- c()
+
+for (i in 1:nrow(ratings_matrix)) {
+  for (j in 1:ncol(ratings_matrix)) {
+    
+    if (is.na(ratings_matrix[i, j])) next
+    
+    actual <- ratings_matrix[i, j]
+    user <- rownames(ratings_matrix)[i]
+    movie <- colnames(ratings_matrix)[j]
+    
+    temp_matrix <- ratings_matrix
+    temp_matrix[i, j] <- NA
+    
+    if (sum(!is.na(temp_matrix[i, ])) < 2) next
+    
+    temp_user_avg <- rowMeans(temp_matrix, na.rm = TRUE)
+    temp_centered <- temp_matrix - temp_user_avg
+    
+    temp_sim <- matrix(NA, nrow = nrow(temp_matrix), ncol = nrow(temp_matrix))
+    rownames(temp_sim) <- rownames(temp_matrix)
+    colnames(temp_sim) <- rownames(temp_matrix)
+    
+    for (a in 1:nrow(temp_matrix)) {
+      for (b in 1:nrow(temp_matrix)) {
+        if (a == b) { temp_sim[a, b] <- 1; next }
+        both <- !is.na(temp_centered[a, ]) & !is.na(temp_centered[b, ])
+        if (sum(both) < 2) next
+        u_r <- temp_centered[a, both]
+        v_r <- temp_centered[b, both]
+        denom <- sqrt(sum(u_r^2)) * sqrt(sum(v_r^2))
+        temp_sim[a, b] <- if (denom == 0) 0 else sum(u_r * v_r) / denom
+      }
+    }
+    
+    temp_overall <- mean(temp_matrix, na.rm = TRUE)
+    gbe_pred <- temp_overall + 
+      (temp_user_avg[user] - temp_overall) + 
+      (mean(temp_matrix[, movie], na.rm = TRUE) - temp_overall)
+    
+    sims <- temp_sim[user, ]
+    candidates <- which(!is.na(temp_matrix[, movie]) & 
+                         !is.na(sims) & 
+                         sims > 0 & 
+                         names(sims) != user)
+    
+    if (length(candidates) == 0) {
+      cf_pred <- gbe_pred  # Fall back to GBE
+    } else {
+      candidates <- candidates[order(sims[candidates], decreasing = TRUE)]
+      if (length(candidates) > 5) candidates <- candidates[1:5]
+      cf_pred <- temp_user_avg[user] + 
+        sum(sims[candidates] * temp_centered[candidates, movie]) / 
+        sum(abs(sims[candidates]))
+    }
+    
+    if (!is.na(cf_pred) && !is.nan(cf_pred) && 
+        !is.na(gbe_pred) && !is.nan(gbe_pred)) {
+      cf_errors <- c(cf_errors, (actual - cf_pred)^2)
+      gbe_errors <- c(gbe_errors, (actual - gbe_pred)^2)
+    }
+  }
+}
+
+cf_rmse <- sqrt(mean(cf_errors))
+gbe_rmse <- sqrt(mean(gbe_errors))
+
+cat("=== Model Evaluation (Leave-One-Out Cross-Validation) ===\n\n")
+cat("Ratings evaluated:", length(cf_errors), "\n\n")
+cat("Collaborative Filtering RMSE:", round(cf_rmse, 4), "\n")
+cat("Global Baseline Estimate RMSE:", round(gbe_rmse, 4), "\n\n")
+
+if (cf_rmse < gbe_rmse) {
+  improvement <- round((1 - cf_rmse / gbe_rmse) * 100, 1)
+  cat("Collaborative Filtering improves over GBE by", improvement, "%\n")
+} else {
+  cat("Global Baseline Estimate performed better on this dataset.\n")
+  cat("This is not unusual with very sparse, small datasets where\n")
+  cat("similarity estimates are unreliable.\n")
+}
+```
+
+# Conclusion
+
+## What Was Built
+
+So for this project I implemented a **User-to-User Collaborative Filtering** recommender system using the same 16-critic, 6-movie survey dataset from the previous Global Baseline Estimate assignment. The system:
+
+1. Centers each user's ratings by subtracting their personal average to remove scale differences
+2. Computes Pearson correlation between all pairs of users (requiring at least 2 co-rated movies)
+3. Predicts missing ratings using a weighted average of the most similar neighbors' centered ratings (up to k = 5 neighbors with positive similarity)
+4. It'll fall back to the Global Baseline Estimate when no valid neighbors are available
+
+## What It Outputs
+
+- **Predicted ratings** for all 40 unrated user–movie pairs
+- **Ranked recommendation lists** for each user, showing unseen movies ordered by predicted rating
+- **RMSE scores** for both models via leave-one-out cross-validation
+
+## Evaluation Results
+
+| Global Baseline Estimate | 1.10 |
+| Collaborative Filtering | 1.02 |
+
+By using the collaborative filter we achieved a **7.7% improvement** over the non-personalized baseline. So, that demonstrates that by using user similarity it does improve prediction accuracy even on a small dataset.
+
+## Limitations
+
+- **Small and sparse data**: With only 16 users and 6 movies, similarity estimates are based on very few co-rated items, making them inherently noisy.
+- **Out-of-range predictions**: The model can predict ratings outside the 1–5 scale (e.g., Dieudonne's predicted 6.0 for JungleBook). Clamping predictions to the valid range would address this.
+- **Cold-start users**: Critics like Burton and Nathan with very few ratings cannot be effectively scored by collaborative filtering and we have to lean on the baseline fallback.
