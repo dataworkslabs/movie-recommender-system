@@ -29,13 +29,19 @@ Repository Structure
 └── README.md
 Key Formulas
 Centered Rating:
-r~(u,i)=r(u,i)−rˉ(u)\tilde{r}(u, i) = r(u, i) - \bar{r}(u)r~(u,i)=r(u,i)−rˉ(u)
-Pearson Similarity:
-sim(u,v)=∑i∈Iuvr~(u,i)⋅r~(v,i)∑i∈Iuvr~(u,i)2⋅∑i∈Iuvr~(v,i)2\text{sim}(u, v) = \frac{\sum_{i \in I_{uv}} \tilde{r}(u,i) \cdot \tilde{r}(v,i)}{\sqrt{\sum_{i \in I_{uv}} \tilde{r}(u,i)^2} \cdot \sqrt{\sum_{i \in I_{uv}} \tilde{r}(v,i)^2}}sim(u,v)=∑i∈Iuv​​r~(u,i)2​⋅∑i∈Iuv​​r~(v,i)2​∑i∈Iuv​​r~(u,i)⋅r~(v,i)​
-Predicted Rating:
-r^(u,i)=rˉ(u)+∑v∈Nsim(u,v)⋅r~(v,i)∑v∈N∣sim(u,v)∣\hat{r}(u, i) = \bar{r}(u) + \frac{\sum_{v \in N} \text{sim}(u,v) \cdot \tilde{r}(v,i)}{\sum_{v \in N} |\text{sim}(u,v)|}r^(u,i)=rˉ(u)+∑v∈N​∣sim(u,v)∣∑v∈N​sim(u,v)⋅r~(v,i)​
-Constraints and Design Decisions
+## Key Formulas
 
+**Centered Rating:**
+
+$$\tilde{r}(u, i) = r(u, i) - \bar{r}(u)$$
+
+**Pearson Similarity:**
+
+$$sim(u, v) = \frac{\sum \tilde{r}(u,i) \cdot \tilde{r}(v,i)}{\sqrt{\sum \tilde{r}(u,i)^2} \cdot \sqrt{\sum \tilde{r}(v,i)^2}}$$
+
+**Predicted Rating:**
+
+$$\hat{r}(u, i) = \bar{r}(u) + \frac{\sum sim(u,v) \cdot \tilde{r}(v,i)}{\sum |sim(u,v)|}$$
 Minimum 2 co-rated movies required to compute similarity between users
 Positive similarity only — users with opposite taste are excluded as neighbors to avoid adding noise in a small dataset
 k = 5 neighbors maximum per prediction
